@@ -2,7 +2,7 @@ FROM node:22-alpine
 
 WORKDIR /app
 
-# Install dependencies
+# Install ALL dependencies (devDeps required for vite/esbuild build step)
 COPY package*.json ./
 RUN npm ci
 
