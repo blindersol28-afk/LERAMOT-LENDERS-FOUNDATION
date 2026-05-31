@@ -1,0 +1,10 @@
+{
+  "name": "Leramot Lenders",
+  "description": "A high-performance lending platform with real M-PESA payhero API integration for instant fee payments and automated onboarding.",
+  "requestFramePermissions": [
+    "geolocation"
+  ],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
