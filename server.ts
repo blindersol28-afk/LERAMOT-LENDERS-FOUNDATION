@@ -66,137 +66,15 @@ function getSetting(key: string, envFallback?: string): string | null {
   return envFallback || null;
 }
 
-// Robust helper to POST to Payhero API.
-// It tries multiple known endpoints sequentially to prevent "Endpoint not found" errors caused by endpoint alterations.
-// For every active endpoint, it dynamically attempts both Basic Username:ApiKey and ChannelId:ApiKey credentials.
-async function postToPayhero(payload: any) {
-  const urls = [
-    // Primary active endpoints (https://payhero.co.ke Live Base URL)
-    'https://payhero.co.ke/api/v2/payments',
-    'https://payhero.co.ke/api/v2/payments/external-request',
-    'https://payhero.co.ke/api/v2/service-channel-payment',
-    'https://payhero.co.ke/api/v2/channel/payment',
-    'https://payhero.co.ke/api/v2/payment/request',
-    'https://payhero.co.ke/v2/payments/external-request',
-    'https://payhero.co.ke/v2/payments',
-    'https://payhero.co.ke/v2/service-channel-payment',
+const PAYHERO_ENDPOINT = 'https://backend.payhero.co.ke/api/v2/payments';
+const PAYHERO_STATUS_ENDPOINT = 'https://backend.payhero.co.ke/api/v2/transaction-status';
 
-    // Failover alternatives (https://backend.payhero.co.ke)
-    'https://backend.payhero.co.ke/api/v2/payments',
-    'https://backend.payhero.co.ke/api/v2/payments/external-request',
-    'https://backend.payhero.co.ke/api/v2/service-channel-payment',
-    'https://backend.payhero.co.ke/api/v2/channel/payment',
-    'https://backend.payhero.co.ke/api/v2/payment/request',
-    'https://backend.payhero.co.ke/v2/payments/external-request',
-    'https://backend.payhero.co.ke/v2/payments',
-    'https://backend.payhero.co.ke/v2/service-channel-payment',
-    
-    // v1 series (https://payhero.co.ke / Original / Fallback versioning)
-    'https://payhero.co.ke/api/v1/service-channel-payment',
-    'https://payhero.co.ke/v1/service-channel-payment',
-    'https://payhero.co.ke/api/v1/apps/service-channel-payment',
-    'https://payhero.co.ke/v2/payments',
-    'https://payhero.co.ke/api/v1/channel/payments',
-    'https://payhero.co.ke/api/v1/channel/payment',
-    'https://payhero.co.ke/api/v1/payment/request',
-    'https://payhero.co.ke/api/v1/payments',
-
-    // v1 series (backend.payhero.co.ke / Original / Fallback versioning)
-    'https://backend.payhero.co.ke/api/v1/service-channel-payment',
-    'https://backend.payhero.co.ke/v1/service-channel-payment',
-    'https://backend.payhero.co.ke/api/v1/apps/service-channel-payment',
-    'https://backend.payhero.co.ke/v1/apps/service-channel-payment',
-    'https://backend.payhero.co.ke/api/v1/channel/payments',
-    'https://backend.payhero.co.ke/api/v1/channel/payment',
-    'https://backend.payhero.co.ke/api/v1/payment/request',
-    'https://backend.payhero.co.ke/api/v1/payments',
-    'https://backend.payhero.co.ke/v1/payments',
-
-    // Apps prefixes
-    'https://backend.payhero.co.ke/api/v1/apps/payments',
-    'https://backend.payhero.co.ke/api/v1/apps/payment/request',
-    'https://backend.payhero.co.ke/api/v2/apps/payments',
-    'https://backend.payhero.co.ke/api/v2/apps/service-channel-payment',
-    
-    // Non-prefixed direct endpoints
-    'https://backend.payhero.co.ke/payments/external-request',
-    'https://backend.payhero.co.ke/payments',
-    'https://backend.payhero.co.ke/service-channel-payment',
-
-    // Main domain fallback alternatives
-    'https://payherokenya.com/api/v1/service-channel-payment',
-    'https://payherokenya.com/api/v2/payments/external-request',
-    'https://payherokenya.com/api/v1/payments'
-  ];
-  
-  let lastError: any = null;
-  for (const url of urls) {
-    // Generate auth variants to try for this URL
-    const authVariants: { name: string; b64: string }[] = [];
-    
-    if (payload.username && payload.api_key) {
-      authVariants.push({
-        name: 'username:api_key',
-        b64: Buffer.from(`${payload.username}:${payload.api_key}`).toString('base64')
-      });
-    }
-    if (payload.channel_id && payload.api_key) {
-      authVariants.push({
-        name: 'channel_id:api_key',
-        b64: Buffer.from(`${payload.channel_id}:${payload.api_key}`).toString('base64')
-      });
-    }
-
-    // Default fallback if both username and channel are somehow empty in the payload
-    if (authVariants.length === 0 && payload.api_key) {
-      authVariants.push({
-        name: 'api_key_only',
-        b64: Buffer.from(`${payload.api_key}`).toString('base64')
-      });
-    }
-
-    // Try authentication schemes sequentially on this specific URL
-    for (const auth of authVariants) {
-      try {
-        console.log(`[Payhero API] Attempting payment request. URL: ${url} Auth: ${auth.name}`);
-        const headers: any = { 
-          'Content-Type': 'application/json',
-          'Authorization': `Basic ${auth.b64}`
-        };
-
-        const response = await axios.post(url, payload, {
-          headers,
-          timeout: 10000
-        });
-        console.log(`[Payhero API] Success on endpoint: ${url} using Auth: ${auth.name}`);
-        return response;
-      } catch (error: any) {
-        lastError = error;
-        const responseText = error.response?.data ? JSON.stringify(error.response.data) : '';
-        const isEndpointError = 
-          error.response?.status === 404 || 
-          responseText.includes('Endpoint not found') ||
-          responseText.includes('not found') ||
-          responseText.includes('Cannot POST');
-        
-        // If the endpoint is completely invalid (404), do not attempt other authentications on it; proceed to the next URL immediately
-        if (isEndpointError) {
-          console.warn(`[Payhero API] Endpoint not found (404): ${url}. Skipping URL.`);
-          break;
-        }
-
-        console.log(`[Payhero API] Connection variant ${auth.name} evaluated.`);
-
-        // If the credentials was parsed and rejected as invalid/forbidden by a live URL, let's capture that and try the next auth scheme
-        const isBadCredentialsError = responseText.includes('Unable to perform request') || responseText.includes('Invalid credentials');
-        if (isBadCredentialsError && auth === authVariants[authVariants.length - 1]) {
-          // If we are on the very last authorization credential variant and we are sure it's rejected, proceed
-          throw error;
-        }
-      }
-    }
-  }
-  throw lastError;
+async function postToPayhero(payload: any, authB64: string) {
+  console.log('[Payhero API] Initiating STK push:', { ...payload });
+  return axios.post(PAYHERO_ENDPOINT, payload, {
+    headers: { 'Content-Type': 'application/json', 'Authorization': `Basic ${authB64}` },
+    timeout: 30000
+  });
 }
 
 // Payhero STK Push initiator
@@ -227,35 +105,27 @@ app.post('/api/payhero/stkpush', async (req, res) => {
     return res.status(500).json({ error: 'Payhero configuration (API Username, API password, and account ID) is incomplete on the server.' });
   }
 
-  // Determine standard callback URL
-  const configuredAppUrl = getSetting('APP_URL', process.env.APP_URL);
-  const callbackUrl = configuredAppUrl 
-    ? `${configuredAppUrl.replace(/\/$/, '')}/api/payhero/callback` 
-    : 'https://example.com/api/payhero/callback';
+  const callbackUrl = getSetting('APP_URL', process.env.APP_URL);
+  if (!callbackUrl) {
+    return res.status(500).json({ error: 'APP_URL not configured. Set it in the Payhero Setup portal.' });
+  }
+
+  const authB64 = Buffer.from(`${username}:${apiKey}`).toString('base64');
 
   try {
-    const payload: any = {
+    const externalRef = accountReference || `LERAMOT-${applicationData?.idNumber || Date.now()}`;
+    const payload = {
       amount: Number(amount),
       phone_number: formattedPhone,
-      channel_id: isNaN(Number(channelId)) ? channelId : Number(channelId),
-      api_key: apiKey,
-      reference: accountReference || `LERAMOT-${applicationData?.idNumber || Math.random().toString(36).substring(2, 9)}`,
-      description: 'Insurance Fee Payment',
+      channel_id: Number(channelId),
+      provider: 'm-pesa',
+      external_reference: externalRef,
       callback_url: callbackUrl
     };
 
-    if (username) {
-      payload.username = username;
-    }
+    console.log('Sending request to Payhero API:', payload);
 
-    // Defensive fallback for accountReference if idNumber is not in root but inside applicationData
-    if (applicationData && applicationData.idNumber && !accountReference) {
-      payload.reference = `LERAMOT-${applicationData.idNumber}`;
-    }
-
-    console.log('Sending request to Payhero API:', { ...payload, api_key: '***' });
-
-    const response = await postToPayhero(payload);
+    const response = await postToPayhero(payload, authB64);
 
     console.log('Payhero API Response:', response.data);
 
@@ -392,14 +262,39 @@ app.post('/api/payhero/callback', (req, res) => {
 });
 
 // Status polling endpoint
-app.get('/api/payhero/status/:checkoutRequestID', (req, res) => {
+app.get('/api/payhero/status/:checkoutRequestID', async (req, res) => {
   const { checkoutRequestID } = req.params;
-  
+
   try {
     const payment = db.prepare('SELECT * FROM payments WHERE checkoutRequestID = ?').get(checkoutRequestID) as any;
-    
+
     if (!payment) {
       return res.status(404).json({ error: 'Transaction not found' });
+    }
+
+    if (payment.status === 'pending') {
+      try {
+        const apiKey = getSetting('API_PASSWORD', getSetting('PAYHERO_API_KEY', process.env.PAYHERO_API_KEY));
+        const username = getSetting('API_USERNAME', getSetting('PAYHERO_USERNAME', process.env.PAYHERO_USERNAME));
+        if (apiKey && username) {
+          const authB64 = Buffer.from(`${username}:${apiKey}`).toString('base64');
+          const statusRes = await axios.get(PAYHERO_STATUS_ENDPOINT, {
+            params: { checkout_request_id: checkoutRequestID },
+            headers: { Authorization: `Basic ${authB64}` },
+            timeout: 10000
+          });
+          const live = statusRes.data;
+          if (live.status === 'Success' || live.ResultCode === 0) {
+            db.prepare('UPDATE payments SET status=?, mpesaReceiptNumber=?, updatedAt=CURRENT_TIMESTAMP WHERE checkoutRequestID=?')
+              .run('success', live.MpesaReceiptNumber || null, checkoutRequestID);
+            return res.json({ ...payment, status: 'success', mpesaReceiptNumber: live.MpesaReceiptNumber || null });
+          } else if (live.status === 'Failed' || (live.ResultCode !== undefined && live.ResultCode !== 0)) {
+            db.prepare('UPDATE payments SET status=?, updatedAt=CURRENT_TIMESTAMP WHERE checkoutRequestID=?')
+              .run('failed', checkoutRequestID);
+            return res.json({ ...payment, status: 'failed' });
+          }
+        }
+      } catch (_) { /* fall through to DB value if live check fails */ }
     }
 
     res.json(payment);
@@ -642,29 +537,26 @@ app.post('/api/loans/repay', async (req, res) => {
     return res.status(500).json({ error: 'Payhero credentials missing or incomplete. Go to Payhero Setup to set them.' });
   }
 
-  const configuredAppUrl = getSetting('APP_URL', process.env.APP_URL);
-  const callbackUrl = configuredAppUrl 
-    ? `${configuredAppUrl.replace(/\/$/, '')}/api/payhero/callback` 
-    : 'https://example.com/api/payhero/callback';
+  const callbackUrl = getSetting('APP_URL', process.env.APP_URL);
+  if (!callbackUrl) {
+    return res.status(500).json({ error: 'APP_URL not configured. Set it in the Payhero Setup portal.' });
+  }
+
+  const authB64 = Buffer.from(`${username}:${apiKey}`).toString('base64');
 
   try {
-    const payload: any = {
+    const payload = {
       amount: Number(amount),
       phone_number: formattedPhone,
-      channel_id: isNaN(Number(channelId)) ? channelId : Number(channelId),
-      api_key: apiKey,
-      reference: `REPAY-${applicationId.toUpperCase()}`,
-      description: 'Loan Repayment Payment',
+      channel_id: Number(channelId),
+      provider: 'm-pesa',
+      external_reference: `REPAY-${applicationId.toUpperCase()}`,
       callback_url: callbackUrl
     };
 
-    if (username) {
-      payload.username = username;
-    }
+    console.log('Sending repayment request to Payhero API:', payload);
 
-    console.log('Sending repayment request to Payhero API:', { ...payload, api_key: '***' });
-
-    const response = await postToPayhero(payload);
+    const response = await postToPayhero(payload, authB64);
 
     console.log('Payhero API Response:', response.data);
 
