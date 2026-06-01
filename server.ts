@@ -17,6 +17,30 @@ app.get('/api/health', (req, res) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString() });
 });
 
+// Temporary diagnostic endpoint — remove after debugging
+app.get('/api/debug/payhero', async (req, res) => {
+  const apiKey = getSetting('API_PASSWORD', getSetting('PAYHERO_API_KEY', process.env.PAYHERO_API_KEY));
+  const channelId = getSetting('ACCOUNT_ID', getSetting('PAYHERO_CHANNEL_ID', process.env.PAYHERO_CHANNEL_ID));
+  const username = getSetting('API_USERNAME', getSetting('PAYHERO_USERNAME', process.env.PAYHERO_USERNAME));
+  const authB64 = Buffer.from(`${username}:${apiKey}`).toString('base64');
+  try {
+    const response = await axios.post('https://backend.payhero.co.ke/api/v2/payments', {
+      amount: 1,
+      phone_number: '254712113315',
+      channel_id: Number(channelId),
+      provider: 'm-pesa',
+      external_reference: 'DEBUG-TEST-001',
+      callback_url: `https://${req.get('host')}/api/payhero/callback`
+    }, {
+      headers: { 'Content-Type': 'application/json', 'Authorization': `Basic ${authB64}` },
+      timeout: 15000
+    });
+    res.json({ success: true, status: response.status, data: response.data, authUsed: `${username}:${apiKey?.slice(0,4)}...` });
+  } catch (err: any) {
+    res.json({ success: false, httpStatus: err.response?.status, payheroResponse: err.response?.data, errorMessage: err.message, authUsed: `${username}:${apiKey?.slice(0,4)}...` });
+  }
+});
+
 app.post('/api/applications', (req, res) => {
   const appData = req.body;
   
