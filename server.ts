@@ -105,10 +105,8 @@ app.post('/api/payhero/stkpush', async (req, res) => {
     return res.status(500).json({ error: 'Payhero configuration (API Username, API password, and account ID) is incomplete on the server.' });
   }
 
-  const callbackUrl = getSetting('APP_URL', process.env.APP_URL);
-  if (!callbackUrl) {
-    return res.status(500).json({ error: 'APP_URL not configured. Set it in the Payhero Setup portal.' });
-  }
+  const callbackUrl = getSetting('APP_URL', process.env.APP_URL) ||
+    `https://${req.get('host')}/api/payhero/callback`;
 
   const authB64 = Buffer.from(`${username}:${apiKey}`).toString('base64');
 
@@ -537,10 +535,8 @@ app.post('/api/loans/repay', async (req, res) => {
     return res.status(500).json({ error: 'Payhero credentials missing or incomplete. Go to Payhero Setup to set them.' });
   }
 
-  const callbackUrl = getSetting('APP_URL', process.env.APP_URL);
-  if (!callbackUrl) {
-    return res.status(500).json({ error: 'APP_URL not configured. Set it in the Payhero Setup portal.' });
-  }
+  const callbackUrl = getSetting('APP_URL', process.env.APP_URL) ||
+    `https://${req.get('host')}/api/payhero/callback`;
 
   const authB64 = Buffer.from(`${username}:${apiKey}`).toString('base64');
 
