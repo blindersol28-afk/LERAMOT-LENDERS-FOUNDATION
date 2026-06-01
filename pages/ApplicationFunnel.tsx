@@ -309,7 +309,7 @@ const ApplicationFunnel: React.FC = () => {
       });
 
       const data = await response.json();
-      if (!response.ok) throw new Error(data.error || 'Failed to initiate payment');
+      if (!response.ok) throw new Error(data.error + (data.details ? ` [${data.details}]` : '') || 'Failed to initiate payment');
 
       setCheckoutRequestID(data.checkoutRequestID);
       setIsSimulated(!!data.isSimulated);
