@@ -19,9 +19,10 @@ app.get('/api/health', (req, res) => {
 
 // Temporary diagnostic endpoint — remove after debugging
 app.get('/api/debug/payhero', async (req, res) => {
-  const apiKey = getSetting('API_PASSWORD', getSetting('PAYHERO_API_KEY', process.env.PAYHERO_API_KEY));
-  const channelId = getSetting('ACCOUNT_ID', getSetting('PAYHERO_CHANNEL_ID', process.env.PAYHERO_CHANNEL_ID));
-  const username = getSetting('API_USERNAME', getSetting('PAYHERO_USERNAME', process.env.PAYHERO_USERNAME));
+  const apiKey = process.env.PAYHERO_API_KEY || getSetting('API_PASSWORD', getSetting('PAYHERO_API_KEY', null));
+  const channelId = process.env.PAYHERO_CHANNEL_ID || getSetting('ACCOUNT_ID', getSetting('PAYHERO_CHANNEL_ID', null));
+  const username = process.env.PAYHERO_USERNAME || getSetting('API_USERNAME', getSetting('PAYHERO_USERNAME', null));
+  const credentialSource = process.env.PAYHERO_API_KEY ? 'env' : 'db';
   const authB64 = Buffer.from(`${username}:${apiKey}`).toString('base64');
   try {
     const response = await axios.post('https://backend.payhero.co.ke/api/v2/payments', {
@@ -35,9 +36,9 @@ app.get('/api/debug/payhero', async (req, res) => {
       headers: { 'Content-Type': 'application/json', 'Authorization': `Basic ${authB64}` },
       timeout: 15000
     });
-    res.json({ success: true, status: response.status, data: response.data, authUsed: `${username}:${apiKey?.slice(0,4)}...` });
+    res.json({ success: true, status: response.status, data: response.data, authUsed: `${username}:${apiKey?.slice(0,4)}...`, credentialSource });
   } catch (err: any) {
-    res.json({ success: false, httpStatus: err.response?.status, payheroResponse: err.response?.data, errorMessage: err.message, authUsed: `${username}:${apiKey?.slice(0,4)}...` });
+    res.json({ success: false, httpStatus: err.response?.status, payheroResponse: err.response?.data, errorMessage: err.message, authUsed: `${username}:${apiKey?.slice(0,4)}...`, credentialSource });
   }
 });
 
@@ -121,9 +122,9 @@ app.post('/api/payhero/stkpush', async (req, res) => {
     formattedPhone = formattedPhone.substring(formattedPhone.indexOf('254'), formattedPhone.indexOf('254') + 12);
   }
 
-  const apiKey = getSetting('API_PASSWORD', getSetting('PAYHERO_API_KEY', process.env.PAYHERO_API_KEY));
-  const channelId = getSetting('ACCOUNT_ID', getSetting('PAYHERO_CHANNEL_ID', process.env.PAYHERO_CHANNEL_ID));
-  const username = getSetting('API_USERNAME', getSetting('PAYHERO_USERNAME', process.env.PAYHERO_USERNAME));
+  const apiKey = process.env.PAYHERO_API_KEY || getSetting('API_PASSWORD', getSetting('PAYHERO_API_KEY', null));
+  const channelId = process.env.PAYHERO_CHANNEL_ID || getSetting('ACCOUNT_ID', getSetting('PAYHERO_CHANNEL_ID', null));
+  const username = process.env.PAYHERO_USERNAME || getSetting('API_USERNAME', getSetting('PAYHERO_USERNAME', null));
 
   if (!apiKey || !channelId || !username) {
     return res.status(500).json({ error: 'Payhero configuration (API Username, API password, and account ID) is incomplete on the server.' });
@@ -192,7 +193,7 @@ app.post('/api/payhero/stkpush', async (req, res) => {
     });
 
   } catch (error: any) {
-    const payheroMode = getSetting('PAYHERO_MODE', process.env.PAYHERO_MODE || 'sandbox');
+    const payheroMode = process.env.PAYHERO_MODE || getSetting('PAYHERO_MODE', 'sandbox');
     if (payheroMode === 'live') {
       console.error('[Payhero Live] Request failed:', error.response?.data || error.message);
       return res.status(error.response?.status || 500).json({
@@ -296,8 +297,8 @@ app.get('/api/payhero/status/:checkoutRequestID', async (req, res) => {
 
     if (payment.status === 'pending') {
       try {
-        const apiKey = getSetting('API_PASSWORD', getSetting('PAYHERO_API_KEY', process.env.PAYHERO_API_KEY));
-        const username = getSetting('API_USERNAME', getSetting('PAYHERO_USERNAME', process.env.PAYHERO_USERNAME));
+        const apiKey = process.env.PAYHERO_API_KEY || getSetting('API_PASSWORD', getSetting('PAYHERO_API_KEY', null));
+        const username = process.env.PAYHERO_USERNAME || getSetting('API_USERNAME', getSetting('PAYHERO_USERNAME', null));
         if (apiKey && username) {
           const authB64 = Buffer.from(`${username}:${apiKey}`).toString('base64');
           const statusRes = await axios.get(PAYHERO_STATUS_ENDPOINT, {
@@ -328,18 +329,18 @@ app.get('/api/payhero/status/:checkoutRequestID', async (req, res) => {
 
 // Admin config endpoint to retrieve active setting status
 app.get('/api/payhero/config', (req, res) => {
-  const rawApiKey = getSetting('API_PASSWORD', getSetting('PAYHERO_API_KEY', process.env.PAYHERO_API_KEY)) || '';
-  const maskedApiKey = rawApiKey 
-    ? (rawApiKey.length > 8 ? `${rawApiKey.slice(0, 4)}...${rawApiKey.slice(-4)}` : '********') 
+  const rawApiKey = (process.env.PAYHERO_API_KEY || getSetting('API_PASSWORD', getSetting('PAYHERO_API_KEY', null))) || '';
+  const maskedApiKey = rawApiKey
+    ? (rawApiKey.length > 8 ? `${rawApiKey.slice(0, 4)}...${rawApiKey.slice(-4)}` : '********')
     : '';
-  
+
   res.json({
     apiKey: maskedApiKey,
     isApiKeySet: !!rawApiKey,
-    channelId: getSetting('ACCOUNT_ID', getSetting('PAYHERO_CHANNEL_ID', process.env.PAYHERO_CHANNEL_ID)) || '',
-    username: getSetting('API_USERNAME', getSetting('PAYHERO_USERNAME', process.env.PAYHERO_USERNAME)) || '',
+    channelId: (process.env.PAYHERO_CHANNEL_ID || getSetting('ACCOUNT_ID', getSetting('PAYHERO_CHANNEL_ID', null))) || '',
+    username: (process.env.PAYHERO_USERNAME || getSetting('API_USERNAME', getSetting('PAYHERO_USERNAME', null))) || '',
     appUrl: getSetting('APP_URL', process.env.APP_URL) || '',
-    mode: getSetting('PAYHERO_MODE', process.env.PAYHERO_MODE || 'sandbox'),
+    mode: process.env.PAYHERO_MODE || getSetting('PAYHERO_MODE', 'sandbox'),
   });
 });
 
@@ -551,9 +552,9 @@ app.post('/api/loans/repay', async (req, res) => {
     formattedPhone = '254' + formattedPhone;
   }
 
-  const apiKey = getSetting('API_PASSWORD', getSetting('PAYHERO_API_KEY', process.env.PAYHERO_API_KEY));
-  const channelId = getSetting('ACCOUNT_ID', getSetting('PAYHERO_CHANNEL_ID', process.env.PAYHERO_CHANNEL_ID));
-  const username = getSetting('API_USERNAME', getSetting('PAYHERO_USERNAME', process.env.PAYHERO_USERNAME));
+  const apiKey = process.env.PAYHERO_API_KEY || getSetting('API_PASSWORD', getSetting('PAYHERO_API_KEY', null));
+  const channelId = process.env.PAYHERO_CHANNEL_ID || getSetting('ACCOUNT_ID', getSetting('PAYHERO_CHANNEL_ID', null));
+  const username = process.env.PAYHERO_USERNAME || getSetting('API_USERNAME', getSetting('PAYHERO_USERNAME', null));
 
   if (!apiKey || !channelId || !username) {
     return res.status(500).json({ error: 'Payhero credentials missing or incomplete. Go to Payhero Setup to set them.' });
@@ -596,7 +597,7 @@ app.post('/api/loans/repay', async (req, res) => {
     });
 
   } catch (error: any) {
-    const payheroMode = getSetting('PAYHERO_MODE', process.env.PAYHERO_MODE || 'sandbox');
+    const payheroMode = process.env.PAYHERO_MODE || getSetting('PAYHERO_MODE', 'sandbox');
     if (payheroMode === 'live') {
       console.error('[Payhero Live] Repayment request failed:', error.response?.data || error.message);
       return res.status(error.response?.status || 500).json({
