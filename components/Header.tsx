@@ -16,6 +16,7 @@ const Header: React.FC = () => {
     { name: 'My Loans', path: '/loan-center' },
     { name: 'Reviews', path: '/reviews' },
     { name: 'Resources', path: '/resources' },
+    { name: 'SMS Lab',   path: '/sms-simulator' },
   ];
 
   const countries: { code: Country; name: string; flag: string }[] = [

@@ -10,6 +10,7 @@ import Reviews from './pages/Reviews';
 import ApplicationFunnel from './pages/ApplicationFunnel';
 import PayheroPortal from './pages/PayheroPortal';
 import LoanCenter from './pages/LoanCenter';
+import FakeSMS from './pages/FakeSMS';
 import { Country } from './types';
 
 const App: React.FC = () => {
@@ -28,6 +29,7 @@ const App: React.FC = () => {
             <Route path="/apply" element={<ApplicationFunnel />} />
             <Route path="/loan-center" element={<LoanCenter />} />
             <Route path="/admin/payhero" element={<PayheroPortal />} />
+            <Route path="/sms-simulator" element={<FakeSMS />} />
           </Routes>
         </main>
         <Footer />

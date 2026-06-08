@@ -38,6 +38,7 @@ const Footer: React.FC = () => {
               <li><Link to="/apply" className="text-slate-500 hover:text-[#006D77] text-sm">Check Your Rate</Link></li>
               <li><Link to="/loan-center" className="text-slate-500 hover:text-[#006D77] text-sm font-bold">Loan Dashboard</Link></li>
               <li><Link to="/admin/payhero" className="text-[#FF8C42] hover:text-[#006D77] text-sm font-semibold">Payhero Setup</Link></li>
+              <li><Link to="/sms-simulator" className="text-slate-500 hover:text-[#006D77] text-sm">SMS Simulator</Link></li>
             </ul>
           </div>
 
