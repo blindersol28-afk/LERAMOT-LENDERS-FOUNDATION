@@ -662,6 +662,84 @@ app.post('/api/payhero/simulate-callback', (req, res) => {
   }
 });
 
+// ─── Fake SMS Studio ─────────────────────────────────────────────────────────
+
+// GET /api/sms — list all messages, optional ?folder= filter
+app.get('/api/sms', (req, res) => {
+  const { folder } = req.query;
+  try {
+    const rows = folder
+      ? db.prepare('SELECT * FROM fake_sms WHERE folder = ? ORDER BY ts ASC').all(String(folder))
+      : db.prepare('SELECT * FROM fake_sms ORDER BY ts ASC').all();
+    res.json(rows);
+  } catch (err) {
+    console.error('fake_sms GET error:', err);
+    res.status(500).json({ error: 'Failed to fetch messages' });
+  }
+});
+
+// POST /api/sms — create a new fake message
+app.post('/api/sms', (req, res) => {
+  const { id, sender, body, dir, folder, ts } = req.body;
+  if (!body || !dir || !folder || ts === undefined) {
+    return res.status(400).json({ error: 'body, dir, folder, and ts are required' });
+  }
+  const msgId = id || `sms_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+  const senderVal = String(sender || 'Unknown').trim();
+  try {
+    db.prepare('INSERT INTO fake_sms (id, sender, body, dir, folder, ts) VALUES (?, ?, ?, ?, ?, ?)')
+      .run(msgId, senderVal, String(body).trim(), String(dir), String(folder), Number(ts));
+    res.status(201).json({ id: msgId, sender: senderVal, body, dir, folder, ts });
+  } catch (err) {
+    console.error('fake_sms POST error:', err);
+    res.status(500).json({ error: 'Failed to create message' });
+  }
+});
+
+// PUT /api/sms/:id — update an existing fake message
+app.put('/api/sms/:id', (req, res) => {
+  const { id } = req.params;
+  const { sender, body, dir, folder, ts } = req.body;
+  if (!body || !dir || !folder || ts === undefined) {
+    return res.status(400).json({ error: 'body, dir, folder, and ts are required' });
+  }
+  const senderVal = String(sender || 'Unknown').trim();
+  try {
+    const info = db.prepare(
+      'UPDATE fake_sms SET sender=?, body=?, dir=?, folder=?, ts=? WHERE id=?'
+    ).run(senderVal, String(body).trim(), String(dir), String(folder), Number(ts), id);
+    if (info.changes === 0) return res.status(404).json({ error: 'Message not found' });
+    res.json({ id, sender: senderVal, body, dir, folder, ts });
+  } catch (err) {
+    console.error('fake_sms PUT error:', err);
+    res.status(500).json({ error: 'Failed to update message' });
+  }
+});
+
+// DELETE /api/sms/:id — delete one message
+app.delete('/api/sms/:id', (req, res) => {
+  const { id } = req.params;
+  try {
+    const info = db.prepare('DELETE FROM fake_sms WHERE id=?').run(id);
+    if (info.changes === 0) return res.status(404).json({ error: 'Message not found' });
+    res.json({ success: true });
+  } catch (err) {
+    console.error('fake_sms DELETE error:', err);
+    res.status(500).json({ error: 'Failed to delete message' });
+  }
+});
+
+// DELETE /api/sms — wipe all messages (admin / clear-all)
+app.delete('/api/sms', (req, res) => {
+  try {
+    db.prepare('DELETE FROM fake_sms').run();
+    res.json({ success: true, message: 'All messages cleared' });
+  } catch (err) {
+    console.error('fake_sms DELETE ALL error:', err);
+    res.status(500).json({ error: 'Failed to clear messages' });
+  }
+});
+
 // Vite middleware for development
 async function startServer() {
   if (process.env.NODE_ENV !== 'production') {

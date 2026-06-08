@@ -1,620 +1,526 @@
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
+import axios from 'axios';
 
-type Folder = 'inbox' | 'outbox' | 'sent' | 'failed' | 'draft';
+// ─── Types ────────────────────────────────────────────────────────────────────
 
-interface FakeMessage {
-  id: string;
-  folder: Folder;
+type Folder = 'Inbox' | 'Outbox' | 'Sent' | 'Failed' | 'Draft';
+type Dir    = 'them' | 'me';
+
+interface Msg {
+  id:     string;
   sender: string;
-  contactName: string;
-  avatarColor: string;
-  message: string;
-  timestamp: string;
-  isRead: boolean;
+  body:   string;
+  dir:    Dir;
+  folder: Folder;
+  ts:     number; // unix ms
 }
 
-const FOLDERS: { key: Folder; label: string; icon: string }[] = [
-  { key: 'inbox',  label: 'Inbox',   icon: '📥' },
-  { key: 'outbox', label: 'Outbox',  icon: '📤' },
-  { key: 'sent',   label: 'Sent',    icon: '✉️'  },
-  { key: 'failed', label: 'Failed',  icon: '❌'  },
-  { key: 'draft',  label: 'Draft',   icon: '📝'  },
-];
+// ─── Constants ────────────────────────────────────────────────────────────────
 
-const AVATAR_COLORS = [
-  '#006D77', '#FF8C42', '#5C6BC0', '#26A69A', '#AB47BC',
-  '#EF5350', '#42A5F5', '#66BB6A', '#FFA726', '#8D6E63',
-];
+const FOLDERS: Folder[] = ['Inbox', 'Outbox', 'Sent', 'Failed', 'Draft'];
 
-const STORAGE_KEY = 'leramot_fake_sms_v1';
+/** Reference-exact colour tokens */
+const C = {
+  bg:      '#0e1117',
+  panel:   '#161b22',
+  panel2:  '#1c2230',
+  line:    '#2a3140',
+  accent:  '#4f8cff',
+  text:    '#e8edf4',
+  muted:   '#8a93a3',
+  bubThem: '#2a313d',
+  bubMe:   '#4f8cff',
+  danger:  '#ff5b5b',
+  screen:  '#0b0d12',
+  ok:      '#34c759',
+  warn:    '#e2b53e',
+} as const;
 
-const generateId = () => `msg_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+// ─── Helpers ──────────────────────────────────────────────────────────────────
 
-const getInitials = (name: string) => {
-  if (!name) return '?';
-  const parts = name.trim().split(/\s+/);
-  if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
-  return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
-};
+const pad    = (n: number) => String(n).padStart(2, '0');
+const nowDate = () => { const d = new Date(); return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}`; };
+const nowTime = () => { const d = new Date(); return `${pad(d.getHours())}:${pad(d.getMinutes())}`; };
+const clockStr = () => new Date().toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
 
-const formatListTime = (iso: string) => {
-  const date = new Date(iso);
-  const now = new Date();
-  const diffDays = Math.floor((now.getTime() - date.getTime()) / 86_400_000);
-  if (diffDays === 0) return date.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
-  if (diffDays === 1) return 'Yesterday';
-  if (diffDays < 7)  return date.toLocaleDateString('en-US', { weekday: 'short' });
-  return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
-};
+const fmtTs = (ts: number) =>
+  new Date(ts).toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
 
-const formatFullTime = (iso: string) =>
-  new Date(iso).toLocaleString('en-US', {
-    month: 'short', day: 'numeric', year: 'numeric',
-    hour: 'numeric', minute: '2-digit', hour12: true,
-  });
+const genId = () => `sms_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
 
-const localDTString = (date = new Date()) => {
-  const p = (n: number) => String(n).padStart(2, '0');
-  return `${date.getFullYear()}-${p(date.getMonth() + 1)}-${p(date.getDate())}T${p(date.getHours())}:${p(date.getMinutes())}`;
-};
-
-const isOutgoing = (f: Folder) => f === 'outbox' || f === 'sent' || f === 'draft';
-
-const bubbleClass = (f: Folder) => {
-  switch (f) {
-    case 'inbox':  return 'bg-white text-slate-800 rounded-tl-sm shadow-sm';
-    case 'outbox': return 'bg-blue-500 text-white rounded-tr-sm shadow-sm';
-    case 'sent':   return 'bg-[#006D77] text-white rounded-tr-sm shadow-sm';
-    case 'failed': return 'bg-white text-slate-800 border-2 border-red-300 rounded-tl-sm';
-    case 'draft':  return 'bg-yellow-50 text-yellow-900 border-2 border-dashed border-yellow-300 rounded-tr-sm';
+function statusInfo(folder: Folder): { text: string; color: string } | null {
+  switch (folder) {
+    case 'Failed': return { text: 'Not delivered', color: C.danger };
+    case 'Draft':  return { text: 'Draft',          color: C.warn   };
+    case 'Outbox': return { text: 'Sending…',       color: C.muted  };
+    case 'Sent':   return { text: 'Delivered',      color: C.ok     };
+    default:       return null;
   }
+}
+
+// ─── Shared inline-style helpers ──────────────────────────────────────────────
+
+const inp: React.CSSProperties = {
+  width: '100%', background: C.panel2, border: `1px solid ${C.line}`,
+  borderRadius: 12, color: C.text, padding: '11px 13px',
+  fontSize: 14, outline: 'none', fontFamily: 'inherit',
 };
 
-const statusBadge = (f: Folder): { text: string; cls: string } => {
-  switch (f) {
-    case 'inbox':  return { text: '📥 Received',      cls: 'bg-blue-50 text-blue-700 border border-blue-100' };
-    case 'outbox': return { text: '📤 In Outbox',     cls: 'bg-purple-50 text-purple-700 border border-purple-100' };
-    case 'sent':   return { text: '✓✓ Delivered',     cls: 'bg-green-50 text-green-700 border border-green-100' };
-    case 'failed': return { text: '✗ Failed to send', cls: 'bg-red-50 text-red-700 border border-red-100' };
-    case 'draft':  return { text: '📝 Draft',          cls: 'bg-yellow-50 text-yellow-700 border border-yellow-100' };
-  }
+const lbl: React.CSSProperties = {
+  display: 'block', fontSize: 12, color: C.muted,
+  margin: '14px 0 6px', letterSpacing: '.04em', textTransform: 'uppercase',
 };
 
-// ─── Icons ───────────────────────────────────────────────────────────────────
-const EditIcon = () => (
-  <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-    <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/>
-    <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/>
-  </svg>
-);
+// ─── Component ────────────────────────────────────────────────────────────────
 
-const TrashIcon = () => (
-  <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-    <polyline points="3 6 5 6 21 6"/>
-    <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/>
-    <path d="M10 11v6M14 11v6M9 6V4h6v2"/>
-  </svg>
-);
+export default function FakeSMS() {
+  const [allMsgs,      setAllMsgs]      = useState<Msg[]>([]);
+  const [loading,      setLoading]      = useState(true);
+  const [saving,       setSaving]       = useState(false);
+  const [deleting,     setDeleting]     = useState<string | null>(null);
+  const [apiError,     setApiError]     = useState('');
+  const [activeCompose,setActiveCompose]= useState<Folder>('Inbox');
+  const [activeView,   setActiveView]   = useState<Folder>('Inbox');
+  const [clock,        setClock]        = useState(clockStr);
+  const [editId,       setEditId]       = useState<string | null>(null);
+  const [showClearConfirm, setShowClearConfirm] = useState(false);
 
-const SendIcon = () => (
-  <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" viewBox="0 0 24 24" fill="currentColor">
-    <path d="M2 21l21-9L2 3v7l15 2-15 2v7z"/>
-  </svg>
-);
+  // Compose form
+  const [fSender, setFSender] = useState('');
+  const [fBody,   setFBody]   = useState('');
+  const [fDate,   setFDate]   = useState(nowDate);
+  const [fTime,   setFTime]   = useState(nowTime);
+  const [fDir,    setFDir]    = useState<Dir>('them');
 
-const BackIcon = () => (
-  <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
-    <path d="M15 18l-6-6 6-6"/>
-  </svg>
-);
+  const endRef = useRef<HTMLDivElement>(null);
 
-const ComposeIcon = () => (
-  <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
-    <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/>
-    <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/>
-  </svg>
-);
+  // ── Data loading ────────────────────────────────────────────────────────────
 
-// ─────────────────────────────────────────────────────────────────────────────
-
-const FakeSMS: React.FC = () => {
-  const [messages, setMessages] = useState<FakeMessage[]>(() => {
+  const loadMsgs = useCallback(async () => {
     try {
-      const raw = localStorage.getItem(STORAGE_KEY);
-      return raw ? JSON.parse(raw) : [];
+      const { data } = await axios.get<Msg[]>('/api/sms');
+      setAllMsgs(data);
+      setApiError('');
     } catch {
-      return [];
+      setApiError('Could not reach server. Messages may not be saved yet.');
+    } finally {
+      setLoading(false);
     }
-  });
+  }, []);
 
-  const [activeFolder, setActiveFolder]   = useState<Folder>('inbox');
-  const [selectedMsg,  setSelectedMsg]    = useState<FakeMessage | null>(null);
-  const [showCompose,  setShowCompose]    = useState(false);
-  const [editTarget,   setEditTarget]     = useState<FakeMessage | null>(null);
-  const [dismissed,    setDismissed]      = useState(false);
-  // mobile: 'list' shows folder+list; 'detail' shows bubble view
-  const [mobileView,   setMobileView]     = useState<'list' | 'detail'>('list');
+  useEffect(() => { loadMsgs(); }, [loadMsgs]);
 
-  // form fields
-  const [fSender,   setFSender]   = useState('');
-  const [fName,     setFName]     = useState('');
-  const [fMsg,      setFMsg]      = useState('');
-  const [fFolder,   setFFolder]   = useState<Folder>('inbox');
-  const [fDateTime, setFDateTime] = useState('');
-  const [fColor,    setFColor]    = useState(AVATAR_COLORS[0]);
-
+  // Live clock
   useEffect(() => {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(messages));
-  }, [messages]);
+    const id = setInterval(() => setClock(clockStr()), 15_000);
+    return () => clearInterval(id);
+  }, []);
 
-  const folderMessages = [...messages]
-    .filter(m => m.folder === activeFolder)
-    .sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
+  // Auto-scroll to newest message
+  useEffect(() => {
+    endRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [allMsgs, activeView]);
 
-  const unreadCount = (f: Folder) => messages.filter(m => m.folder === f && !m.isRead).length;
+  // ── Derived ─────────────────────────────────────────────────────────────────
 
-  const openCompose = (msg?: FakeMessage) => {
-    if (msg) {
-      setFSender(msg.sender);
-      setFName(msg.contactName === msg.sender ? '' : msg.contactName);
-      setFMsg(msg.message);
-      setFFolder(msg.folder);
-      setFDateTime(localDTString(new Date(msg.timestamp)));
-      setFColor(msg.avatarColor);
-      setEditTarget(msg);
-    } else {
-      setFSender('');
-      setFName('');
-      setFMsg('');
-      setFFolder(activeFolder);
-      setFDateTime(localDTString());
-      setFColor(AVATAR_COLORS[Math.floor(Math.random() * AVATAR_COLORS.length)]);
-      setEditTarget(null);
-    }
-    setShowCompose(true);
+  const viewMsgs   = [...allMsgs].filter(m => m.folder === activeView).sort((a, b) => a.ts - b.ts);
+  const folderCnt  = (f: Folder) => allMsgs.filter(m => m.folder === f).length;
+
+  // ── Actions ─────────────────────────────────────────────────────────────────
+
+  const startEdit = (m: Msg) => {
+    const d = new Date(m.ts);
+    setFSender(m.sender);
+    setFBody(m.body);
+    setFDate(`${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}`);
+    setFTime(`${pad(d.getHours())}:${pad(d.getMinutes())}`);
+    setFDir(m.dir);
+    setActiveCompose(m.folder);
+    setEditId(m.id);
+    setApiError('');
+    window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
-  const handleSave = () => {
-    if (!fSender.trim() || !fMsg.trim()) return;
-    const entry: FakeMessage = {
-      id:          editTarget?.id ?? generateId(),
-      folder:      fFolder,
-      sender:      fSender.trim(),
-      contactName: fName.trim() || fSender.trim(),
-      avatarColor: fColor,
-      message:     fMsg.trim(),
-      timestamp:   fDateTime ? new Date(fDateTime).toISOString() : new Date().toISOString(),
-      isRead:      false,
+  const cancelEdit = () => {
+    setFSender(''); setFBody('');
+    setFDate(nowDate()); setFTime(nowTime());
+    setFDir('them'); setEditId(null);
+    setApiError('');
+  };
+
+  const handleSave = async () => {
+    if (!fBody.trim()) { setApiError('Please write a message first.'); return; }
+    setSaving(true);
+    setApiError('');
+
+    const ts      = new Date(`${fDate}T${fTime || '00:00'}`).getTime() || Date.now();
+    const payload = {
+      id:     editId ?? genId(),
+      sender: fSender.trim() || 'Unknown',
+      body:   fBody.trim(),
+      dir:    fDir,
+      folder: activeCompose,
+      ts,
     };
-    setMessages(prev =>
-      editTarget ? prev.map(m => m.id === editTarget.id ? entry : m) : [...prev, entry]
-    );
-    if (editTarget && selectedMsg?.id === editTarget.id) setSelectedMsg(entry);
-    setActiveFolder(fFolder);
-    setShowCompose(false);
+
+    try {
+      if (editId) {
+        await axios.put(`/api/sms/${editId}`, payload);
+        cancelEdit();
+      } else {
+        await axios.post('/api/sms', payload);
+        setFBody('');           // keep sender/date/dir for quick multi-add
+      }
+      await loadMsgs();
+      setActiveView(activeCompose);
+    } catch {
+      setApiError('Server error — message not saved. Is the server running?');
+    } finally {
+      setSaving(false);
+    }
   };
 
-  const handleDelete = (id: string) => {
-    setMessages(prev => prev.filter(m => m.id !== id));
-    if (selectedMsg?.id === id) { setSelectedMsg(null); setMobileView('list'); }
+  const handleDelete = async (id: string) => {
+    setDeleting(id);
+    try {
+      await axios.delete(`/api/sms/${id}`);
+      setAllMsgs(prev => prev.filter(m => m.id !== id));
+      if (editId === id) cancelEdit();
+    } catch {
+      setApiError('Failed to delete message.');
+    } finally {
+      setDeleting(null);
+    }
   };
 
-  const selectMsg = (msg: FakeMessage) => {
-    setSelectedMsg(msg);
-    setMessages(prev => prev.map(m => m.id === msg.id ? { ...m, isRead: true } : m));
-    setMobileView('detail');
+  const handleClearAll = async () => {
+    try {
+      await axios.delete('/api/sms');
+      setAllMsgs([]);
+      setShowClearConfirm(false);
+    } catch {
+      setApiError('Failed to clear all messages.');
+    }
   };
 
-  // ── Render ────────────────────────────────────────────────────────────────
+  // ── Render ──────────────────────────────────────────────────────────────────
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-100 via-slate-50 to-slate-100">
+    <div style={{
+      background: `radial-gradient(1200px 600px at 80% -10%, #1a2336 0%, ${C.bg} 55%)`,
+      color:       C.text,
+      minHeight:   '100vh',
+      padding:     '32px 16px 64px',
+      display:     'flex',
+      justifyContent: 'center',
+      alignItems:  'flex-start',
+      gap:         28,
+      flexWrap:    'wrap',
+      fontFamily:  "'Inter', 'DM Sans', sans-serif",
+    }}>
 
-      {/* ── Disclaimer Banner ─────────────────────────────────────────────── */}
-      {!dismissed && (
-        <div className="bg-amber-50 border-b-2 border-amber-200 px-4 py-3">
-          <div className="max-w-5xl mx-auto flex items-start gap-3">
-            <span className="text-amber-500 text-xl flex-shrink-0 mt-0.5">⚠️</span>
-            <div className="flex-1">
-              <p className="text-sm font-bold text-amber-800">Entertainment Only — No Real SMS Is Ever Sent</p>
-              <p className="text-xs text-amber-700 mt-0.5 leading-relaxed">
-                All messages in this simulator are 100% fictional. Nothing is transmitted over the network,
-                no real person receives any message, and no contact list or phone is accessed.
-                This is a novelty tool for prank &amp; entertainment purposes only.
-              </p>
-            </div>
+      {/* ══════════════════════════════════════
+          COMPOSER PANEL
+      ══════════════════════════════════════ */}
+      <div style={{ width: 360, flexShrink: 0, background: C.panel, border: `1px solid ${C.line}`, borderRadius: 20, padding: 24 }}>
+
+        <h1 style={{ fontFamily: "'Outfit', 'Sora', sans-serif", fontWeight: 700, fontSize: 22, marginBottom: 4 }}>
+          Fake SMS Studio
+        </h1>
+        <p style={{ color: C.muted, fontSize: 13, marginBottom: 22, lineHeight: 1.5 }}>
+          Compose novelty messages — saved to server DB, shown only on this screen.
+        </p>
+
+        {/* Error banner */}
+        {apiError && (
+          <div style={{ background: '#ff5b5b18', border: `1px solid ${C.danger}40`, borderRadius: 10, padding: '10px 14px', fontSize: 13, color: '#ff8a8a', marginBottom: 16, lineHeight: 1.5 }}>
+            {apiError}
+          </div>
+        )}
+
+        {/* Sender */}
+        <label style={lbl}>Contact name / number</label>
+        <input
+          style={inp}
+          value={fSender}
+          onChange={e => setFSender(e.target.value)}
+          placeholder="e.g. Mom, or +254 712 345 678"
+        />
+
+        {/* Body */}
+        <label style={lbl}>Message</label>
+        <textarea
+          style={{ ...inp, resize: 'vertical', minHeight: 72 }}
+          rows={3}
+          value={fBody}
+          onChange={e => setFBody(e.target.value)}
+          placeholder="Type the message text…"
+          onKeyDown={e => { if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') handleSave(); }}
+        />
+        <div style={{ textAlign: 'right', fontSize: 11, color: C.muted, marginTop: 4 }}>{fBody.length} chars · Ctrl+Enter to save</div>
+
+        {/* Date + Time */}
+        <div style={{ display: 'flex', gap: 10 }}>
+          <div style={{ flex: 1 }}>
+            <label style={lbl}>Date</label>
+            <input style={inp} type="date" value={fDate} onChange={e => setFDate(e.target.value)} />
+          </div>
+          <div style={{ flex: 1 }}>
+            <label style={lbl}>Time</label>
+            <input style={inp} type="time" value={fTime} onChange={e => setFTime(e.target.value)} />
+          </div>
+        </div>
+
+        {/* Direction */}
+        <label style={lbl}>Direction</label>
+        <select style={{ ...inp, cursor: 'pointer' }} value={fDir} onChange={e => setFDir(e.target.value as Dir)}>
+          <option value="them">📨  Received  (from them)</option>
+          <option value="me">📤  Sent  (from me)</option>
+        </select>
+
+        {/* Folder pills */}
+        <label style={lbl}>Folder</label>
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginTop: 2 }}>
+          {FOLDERS.map(f => (
             <button
-              onClick={() => setDismissed(true)}
-              className="text-amber-500 hover:text-amber-800 font-bold text-xl leading-none flex-shrink-0 mt-0.5"
-              aria-label="Dismiss disclaimer"
+              key={f}
+              onClick={() => setActiveCompose(f)}
+              style={{
+                padding: '7px 14px', borderRadius: 999,
+                border:  `1px solid ${activeCompose === f ? C.accent : C.line}`,
+                background: activeCompose === f ? C.accent : C.panel2,
+                color: activeCompose === f ? '#fff' : C.muted,
+                fontSize: 12, cursor: 'pointer', fontFamily: 'inherit', transition: 'all .15s',
+              }}
             >
-              ×
+              {f}
             </button>
-          </div>
+          ))}
         </div>
-      )}
 
-      <div className="max-w-5xl mx-auto px-4 py-6">
+        {/* Save / Add button */}
+        <button
+          onClick={handleSave}
+          disabled={saving}
+          style={{
+            width: '100%', marginTop: 22, padding: 13, borderRadius: 12,
+            border: 'none',
+            background: saving ? '#3358a0' : C.accent,
+            color: '#fff',
+            fontFamily: "'Outfit', 'Sora', sans-serif",
+            fontWeight: 600, fontSize: 15,
+            cursor: saving ? 'wait' : 'pointer',
+            transition: 'background .15s',
+          }}
+        >
+          {saving ? 'Saving…' : editId ? '✓  Save Changes' : '+  Add Message'}
+        </button>
 
-        {/* ── Page Header ────────────────────────────────────────────────── */}
-        <div className="flex items-center justify-between mb-6">
-          <div>
-            <h1 className="text-2xl font-black text-slate-800 font-outfit tracking-tight">SMS Simulator</h1>
-            <p className="text-sm text-slate-500 mt-0.5">Compose &amp; preview fake messages — stored only on this device</p>
-          </div>
+        {/* Cancel edit */}
+        {editId && (
           <button
-            onClick={() => openCompose()}
-            className="flex items-center gap-2 bg-[#006D77] text-white px-5 py-2.5 rounded-full font-semibold text-sm shadow-lg hover:bg-[#065A63] transition-all hover:scale-105"
+            onClick={cancelEdit}
+            style={{
+              width: '100%', marginTop: 8, padding: '10px', borderRadius: 12,
+              border: `1px solid ${C.line}`, background: 'transparent',
+              color: C.muted, fontSize: 13, cursor: 'pointer', fontFamily: 'inherit',
+            }}
           >
-            <ComposeIcon />
-            Compose
+            Cancel Edit
           </button>
+        )}
+
+        {/* Stats row */}
+        <div style={{ marginTop: 18, display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderTop: `1px solid ${C.line}`, paddingTop: 14 }}>
+          <span style={{ fontSize: 12, color: C.muted }}>
+            {loading ? 'Loading…' : `${allMsgs.length} message${allMsgs.length !== 1 ? 's' : ''} stored`}
+          </span>
+          {allMsgs.length > 0 && !showClearConfirm && (
+            <button
+              onClick={() => setShowClearConfirm(true)}
+              style={{ fontSize: 11, color: C.danger, background: 'none', border: 'none', cursor: 'pointer', fontFamily: 'inherit', opacity: 0.7 }}
+            >
+              Clear all
+            </button>
+          )}
+          {showClearConfirm && (
+            <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+              <span style={{ fontSize: 11, color: C.muted }}>Sure?</span>
+              <button onClick={handleClearAll} style={{ fontSize: 11, color: C.danger, background: 'none', border: 'none', cursor: 'pointer', fontFamily: 'inherit', fontWeight: 600 }}>Yes</button>
+              <button onClick={() => setShowClearConfirm(false)} style={{ fontSize: 11, color: C.muted, background: 'none', border: 'none', cursor: 'pointer', fontFamily: 'inherit' }}>No</button>
+            </div>
+          )}
         </div>
 
-        {/* ── Three-Column Layout ─────────────────────────────────────────── */}
-        <div className="flex gap-3" style={{ height: '620px' }}>
-
-          {/* Column 1 — Folder Sidebar */}
-          <div
-            className={`w-44 flex-shrink-0 bg-white rounded-2xl shadow-sm border border-slate-100 flex flex-col overflow-hidden
-              ${mobileView === 'detail' ? 'hidden md:flex' : 'flex'}`}
-          >
-            <div className="px-4 py-3 bg-slate-50 border-b border-slate-100">
-              <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Mailboxes</p>
-            </div>
-            <nav className="p-2 space-y-0.5 flex-1 overflow-y-auto">
-              {FOLDERS.map(f => (
-                <button
-                  key={f.key}
-                  onClick={() => { setActiveFolder(f.key); setSelectedMsg(null); setMobileView('list'); }}
-                  className={`w-full flex items-center justify-between px-3 py-2.5 rounded-xl text-sm font-medium transition-all ${
-                    activeFolder === f.key
-                      ? 'bg-[#006D77] text-white shadow-sm'
-                      : 'text-slate-600 hover:bg-slate-50'
-                  }`}
-                >
-                  <span className="flex items-center gap-2">
-                    <span className="text-base">{f.icon}</span>
-                    <span>{f.label}</span>
-                  </span>
-                  {unreadCount(f.key) > 0 && (
-                    <span className={`text-[10px] font-bold rounded-full min-w-[18px] h-[18px] flex items-center justify-center px-1 ${
-                      activeFolder === f.key ? 'bg-white text-[#006D77]' : 'bg-[#FF8C42] text-white'
-                    }`}>
-                      {unreadCount(f.key)}
-                    </span>
-                  )}
-                </button>
-              ))}
-            </nav>
-            <div className="p-3 border-t border-slate-100 text-center">
-              <p className="text-[10px] text-slate-400">
-                {messages.length} message{messages.length !== 1 ? 's' : ''}
-              </p>
-            </div>
-          </div>
-
-          {/* Column 2 — Message List */}
-          <div
-            className={`flex-1 bg-white rounded-2xl shadow-sm border border-slate-100 overflow-hidden flex flex-col
-              ${mobileView === 'detail' && selectedMsg ? 'hidden md:flex' : 'flex'}`}
-          >
-            <div className="px-4 py-3 bg-slate-50 border-b border-slate-100 flex items-center gap-2">
-              <span className="text-lg">{FOLDERS.find(f => f.key === activeFolder)?.icon}</span>
-              <span className="font-semibold text-slate-700 text-sm capitalize">{activeFolder}</span>
-              <span className="text-[10px] bg-slate-200 text-slate-500 font-semibold px-2 py-0.5 rounded-full">
-                {folderMessages.length}
-              </span>
-            </div>
-
-            <div className="flex-1 overflow-y-auto">
-              {folderMessages.length === 0 ? (
-                <div className="h-full flex flex-col items-center justify-center text-slate-300 gap-4 px-6">
-                  <span className="text-6xl opacity-40">{FOLDERS.find(f => f.key === activeFolder)?.icon}</span>
-                  <div className="text-center">
-                    <p className="text-sm font-semibold text-slate-400">No messages</p>
-                    <p className="text-xs text-slate-300 mt-1">Compose a fake message to see it here</p>
-                  </div>
-                  <button
-                    onClick={() => openCompose()}
-                    className="text-[#006D77] text-sm font-semibold border-2 border-[#006D77] px-4 py-2 rounded-full hover:bg-[#006D77] hover:text-white transition-all"
-                  >
-                    + Compose
-                  </button>
-                </div>
-              ) : (
-                <div className="divide-y divide-slate-50">
-                  {folderMessages.map(msg => (
-                    <button
-                      key={msg.id}
-                      onClick={() => selectMsg(msg)}
-                      className={`w-full text-left flex items-start gap-3 px-4 py-3.5 hover:bg-slate-50 transition-colors ${
-                        selectedMsg?.id === msg.id ? 'bg-[#006D77]/5 border-l-2 border-[#006D77]' : ''
-                      }`}
-                    >
-                      {/* Avatar */}
-                      <div
-                        className="w-11 h-11 rounded-full flex items-center justify-center text-white text-sm font-bold flex-shrink-0 shadow-sm"
-                        style={{ backgroundColor: msg.avatarColor }}
-                      >
-                        {getInitials(msg.contactName || msg.sender)}
-                      </div>
-
-                      <div className="flex-1 min-w-0">
-                        <div className="flex items-baseline justify-between gap-2">
-                          <span className={`text-sm truncate ${!msg.isRead ? 'font-bold text-slate-900' : 'font-semibold text-slate-600'}`}>
-                            {msg.contactName || msg.sender}
-                          </span>
-                          <span className="text-[11px] text-slate-400 flex-shrink-0">{formatListTime(msg.timestamp)}</span>
-                        </div>
-                        <p className="text-xs text-slate-400 truncate">{msg.sender}</p>
-                        <p className={`text-sm truncate mt-0.5 ${!msg.isRead ? 'text-slate-600 font-medium' : 'text-slate-400'}`}>
-                          {msg.message}
-                        </p>
-                      </div>
-
-                      {!msg.isRead && (
-                        <div className="w-2.5 h-2.5 rounded-full bg-[#006D77] flex-shrink-0 mt-2" />
-                      )}
-                    </button>
-                  ))}
-                </div>
-              )}
-            </div>
-          </div>
-
-          {/* Column 3 — Bubble Preview */}
-          <div
-            className={`w-72 flex-shrink-0 bg-white rounded-2xl shadow-sm border border-slate-100 overflow-hidden flex flex-col
-              ${!selectedMsg && mobileView !== 'detail' ? 'hidden md:flex' : 'flex'}`}
-          >
-            {selectedMsg ? (
-              <>
-                {/* Chat Top Bar */}
-                <div className="px-3 py-3 bg-slate-50 border-b border-slate-100 flex items-center gap-2">
-                  <button
-                    onClick={() => { setSelectedMsg(null); setMobileView('list'); }}
-                    className="md:hidden p-1 -ml-1 text-[#006D77] hover:bg-slate-100 rounded-lg transition-colors"
-                  >
-                    <BackIcon />
-                  </button>
-                  <div
-                    className="w-9 h-9 rounded-full flex items-center justify-center text-white text-xs font-bold flex-shrink-0"
-                    style={{ backgroundColor: selectedMsg.avatarColor }}
-                  >
-                    {getInitials(selectedMsg.contactName || selectedMsg.sender)}
-                  </div>
-                  <div className="flex-1 min-w-0">
-                    <p className="text-sm font-semibold text-slate-800 truncate">{selectedMsg.contactName || selectedMsg.sender}</p>
-                    <p className="text-[11px] text-slate-400 truncate">{selectedMsg.sender}</p>
-                  </div>
-                  <button
-                    onClick={() => openCompose(selectedMsg)}
-                    className="p-1.5 rounded-lg hover:bg-slate-200 text-slate-500 transition-colors"
-                    title="Edit message"
-                  >
-                    <EditIcon />
-                  </button>
-                  <button
-                    onClick={() => handleDelete(selectedMsg.id)}
-                    className="p-1.5 rounded-lg hover:bg-red-50 text-slate-400 hover:text-red-500 transition-colors"
-                    title="Delete message"
-                  >
-                    <TrashIcon />
-                  </button>
-                </div>
-
-                {/* Bubbles Area */}
-                <div className="flex-1 overflow-y-auto p-4 bg-slate-100 flex flex-col gap-3">
-                  <div className={`flex items-end gap-2 ${isOutgoing(selectedMsg.folder) ? 'flex-row-reverse' : ''}`}>
-                    {!isOutgoing(selectedMsg.folder) && (
-                      <div
-                        className="w-7 h-7 rounded-full flex items-center justify-center text-white text-[10px] font-bold flex-shrink-0"
-                        style={{ backgroundColor: selectedMsg.avatarColor }}
-                      >
-                        {getInitials(selectedMsg.contactName || selectedMsg.sender)}
-                      </div>
-                    )}
-                    <div className={`max-w-[85%] flex flex-col gap-1 ${isOutgoing(selectedMsg.folder) ? 'items-end' : 'items-start'}`}>
-                      <div className={`px-4 py-2.5 rounded-2xl text-sm leading-relaxed ${bubbleClass(selectedMsg.folder)}`}>
-                        {selectedMsg.message}
-                      </div>
-                      <span className="text-[10px] text-slate-400 px-1">
-                        {formatFullTime(selectedMsg.timestamp)}
-                      </span>
-                    </div>
-                  </div>
-
-                  {/* Status badge */}
-                  <div className="flex justify-center mt-1">
-                    <span className={`text-xs font-medium px-3 py-1.5 rounded-full ${statusBadge(selectedMsg.folder).cls}`}>
-                      {statusBadge(selectedMsg.folder).text}
-                    </span>
-                  </div>
-                </div>
-
-                {/* Fake Input Bar */}
-                <div className="px-3 py-2.5 border-t border-slate-100 bg-white flex items-center gap-2">
-                  <div className="flex-1 bg-slate-100 rounded-full px-4 py-2 text-xs text-slate-400 italic select-none">
-                    iMessage or SMS…
-                  </div>
-                  <div className="w-8 h-8 bg-[#006D77] rounded-full flex items-center justify-center text-white opacity-30 cursor-not-allowed">
-                    <SendIcon />
-                  </div>
-                </div>
-              </>
-            ) : (
-              <div className="h-full flex flex-col items-center justify-center text-center px-6 gap-3">
-                <div className="w-16 h-16 bg-slate-100 rounded-2xl flex items-center justify-center">
-                  <span className="text-3xl">💬</span>
-                </div>
-                <p className="text-sm font-medium text-slate-400">No message selected</p>
-                <p className="text-xs text-slate-300">Click any message to preview it as a chat bubble</p>
-              </div>
-            )}
-          </div>
-        </div>
-
-        {/* ── Bottom Disclaimer ───────────────────────────────────────────── */}
-        <p className="text-center text-[11px] text-slate-400 mt-4">
-          ⚠️ All messages are simulated and for entertainment only. Nothing is ever transmitted to anyone.
+        {/* Disclaimer */}
+        <p style={{ marginTop: 12, fontSize: 11, color: C.muted, lineHeight: 1.6 }}>
+          ⚠️ <strong style={{ color: C.muted }}>Entertainment only.</strong> Nothing is transmitted as a real SMS.
+          No contacts are accessed. Messages are stored in this app's private SQLite database.
+          Do not use to deceive or misrepresent real people.
         </p>
       </div>
 
-      {/* ── Compose / Edit Modal ─────────────────────────────────────────── */}
-      {showCompose && (
-        <div
-          className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/60 backdrop-blur-sm"
-          onClick={e => { if (e.target === e.currentTarget) setShowCompose(false); }}
-        >
-          <div className="bg-white w-full sm:max-w-md rounded-t-3xl sm:rounded-2xl shadow-2xl overflow-hidden">
-            {/* Modal Header */}
-            <div className="px-5 py-4 border-b border-slate-100 flex items-center justify-between">
-              <h3 className="font-bold text-slate-800 text-lg">
-                {editTarget ? 'Edit Message' : 'New Fake Message'}
-              </h3>
-              <button
-                onClick={() => setShowCompose(false)}
-                className="w-8 h-8 flex items-center justify-center rounded-full bg-slate-100 text-slate-500 hover:bg-slate-200 transition-colors font-bold text-lg leading-none"
-              >
-                ×
-              </button>
-            </div>
+      {/* ══════════════════════════════════════
+          PHONE MOCKUP
+      ══════════════════════════════════════ */}
+      <div style={{ width: 340, flexShrink: 0, background: '#000', borderRadius: 42, padding: 12, boxShadow: '0 30px 80px rgba(0,0,0,.6)', position: 'sticky', top: 24, alignSelf: 'flex-start' }}>
+        <div style={{ background: C.screen, borderRadius: 32, overflow: 'hidden', height: 680, display: 'flex', flexDirection: 'column' }}>
 
-            {/* Modal Body */}
-            <div className="p-5 space-y-4 max-h-[70vh] overflow-y-auto">
+          {/* ── Status bar ──────────────────────── */}
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '14px 24px 6px', fontSize: 13, fontWeight: 600 }}>
+            <span>{clock}</span>
+            <span style={{ fontSize: 11, letterSpacing: 3 }}>●●  ▮</span>
+          </div>
 
-              {/* Sender */}
-              <div>
-                <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-1.5">
-                  Phone Number / Sender <span className="text-red-400">*</span>
-                </label>
-                <input
-                  type="text"
-                  value={fSender}
-                  onChange={e => setFSender(e.target.value)}
-                  placeholder="+254712345678"
-                  className="w-full border-2 border-slate-200 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:border-[#006D77] transition-colors"
-                />
-              </div>
+          {/* ── Nav title ───────────────────────── */}
+          <div style={{ textAlign: 'center', padding: '6px 16px 12px', borderBottom: `1px solid ${C.line}`, fontFamily: "'Outfit', 'Sora', sans-serif", fontWeight: 600, fontSize: 17 }}>
+            Messages
+            <div style={{ color: C.muted, fontWeight: 400, fontSize: 12, marginTop: 2 }}>{activeView}</div>
+          </div>
 
-              {/* Contact Name */}
-              <div>
-                <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-1.5">
-                  Contact Name <span className="text-slate-300 font-normal normal-case">(optional — shown as avatar name)</span>
-                </label>
-                <input
-                  type="text"
-                  value={fName}
-                  onChange={e => setFName(e.target.value)}
-                  placeholder="John Kamau"
-                  className="w-full border-2 border-slate-200 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:border-[#006D77] transition-colors"
-                />
-              </div>
+          {/* ── Folder tabs ─────────────────────── */}
+          <div style={{ display: 'flex', borderBottom: `1px solid ${C.line}` }}>
+            {FOLDERS.map(f => {
+              const cnt    = folderCnt(f);
+              const active = activeView === f;
+              return (
+                <button
+                  key={f}
+                  onClick={() => setActiveView(f)}
+                  style={{
+                    flex: 1, textAlign: 'center', padding: '9px 2px',
+                    fontSize: 10, lineHeight: 1.3,
+                    color: active ? C.accent : C.muted,
+                    borderTop: 'none', borderLeft: 'none', borderRight: 'none',
+                    borderBottom: active ? `2px solid ${C.accent}` : '2px solid transparent',
+                    background: 'transparent', cursor: 'pointer', fontFamily: 'inherit',
+                    transition: 'color .15s',
+                  }}
+                >
+                  {f}
+                  {cnt > 0 && (
+                    <span style={{ display: 'block', fontSize: 9, color: active ? C.accent : '#3a4152' }}>
+                      {cnt}
+                    </span>
+                  )}
+                </button>
+              );
+            })}
+          </div>
 
-              {/* Message */}
-              <div>
-                <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-1.5">
-                  Message <span className="text-red-400">*</span>
-                </label>
-                <textarea
-                  value={fMsg}
-                  onChange={e => setFMsg(e.target.value)}
-                  placeholder="Type the fake message content…"
-                  rows={4}
-                  className="w-full border-2 border-slate-200 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:border-[#006D77] transition-colors resize-none"
-                />
-                <p className="text-xs text-slate-400 mt-1 text-right">{fMsg.length} chars</p>
-              </div>
-
-              {/* Date/Time + Folder (side by side) */}
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-1.5">
-                    Date &amp; Time
-                  </label>
-                  <input
-                    type="datetime-local"
-                    value={fDateTime}
-                    onChange={e => setFDateTime(e.target.value)}
-                    className="w-full border-2 border-slate-200 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:border-[#006D77] transition-colors"
-                  />
-                </div>
-                <div>
-                  <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-1.5">
-                    Save to Folder
-                  </label>
-                  <select
-                    value={fFolder}
-                    onChange={e => setFFolder(e.target.value as Folder)}
-                    className="w-full border-2 border-slate-200 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:border-[#006D77] bg-white transition-colors"
+          {/* ── Message list ────────────────────── */}
+          <div style={{ flex: 1, overflowY: 'auto', padding: '12px 14px 8px', display: 'flex', flexDirection: 'column', gap: 2 }}>
+            {loading ? (
+              <LoadingDots color={C.muted} />
+            ) : viewMsgs.length === 0 ? (
+              <EmptyState folder={activeView} color={C.muted} />
+            ) : (
+              viewMsgs.map(m => {
+                const isMe    = m.dir === 'me';
+                const st      = statusInfo(m.folder);
+                const isEditing = editId === m.id;
+                const isDeleting = deleting === m.id;
+                return (
+                  <div
+                    key={m.id}
+                    style={{
+                      display: 'flex', flexDirection: 'column', maxWidth: '78%',
+                      alignSelf:  isMe ? 'flex-end' : 'flex-start',
+                      alignItems: isMe ? 'flex-end' : 'flex-start',
+                      opacity: isDeleting ? 0.3 : isEditing ? 0.75 : 1,
+                      transition: 'opacity .2s',
+                    }}
                   >
-                    {FOLDERS.map(f => (
-                      <option key={f.key} value={f.key}>{f.icon} {f.label}</option>
-                    ))}
-                  </select>
-                </div>
-              </div>
+                    {/* Sender label (only for "them") */}
+                    {!isMe && (
+                      <div style={{ fontSize: 11, color: C.muted, margin: '8px 4px 3px' }}>
+                        {m.sender}
+                      </div>
+                    )}
 
-              {/* Avatar Color Picker */}
-              <div>
-                <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-2">
-                  Avatar Color
-                </label>
-                <div className="flex items-center flex-wrap gap-2">
-                  {AVATAR_COLORS.map(c => (
-                    <button
-                      key={c}
-                      onClick={() => setFColor(c)}
-                      className={`w-8 h-8 rounded-full transition-all hover:scale-110 ${fColor === c ? 'ring-2 ring-offset-2 ring-slate-700 scale-110' : ''}`}
-                      style={{ backgroundColor: c }}
-                      aria-label={`Select color ${c}`}
-                    />
-                  ))}
-                  {/* Live preview avatar */}
-                  <div className="ml-3 flex items-center gap-2">
-                    <div
-                      className="w-9 h-9 rounded-full flex items-center justify-center text-white text-sm font-bold shadow-sm"
-                      style={{ backgroundColor: fColor }}
-                    >
-                      {getInitials(fName || fSender || '?')}
+                    {/* Bubble */}
+                    <div style={{
+                      padding: '9px 13px', borderRadius: 18, fontSize: 14, lineHeight: 1.4,
+                      wordBreak: 'break-word',
+                      background: isMe ? C.bubMe : C.bubThem,
+                      color: C.text,
+                      borderBottomRightRadius: isMe ? 4 : 18,
+                      borderBottomLeftRadius:  isMe ? 18 : 4,
+                      outline: isEditing ? `2px solid ${C.accent}` : 'none',
+                    }}>
+                      {m.body}
                     </div>
-                    <span className="text-xs text-slate-400">Preview</span>
+
+                    {/* Meta row: timestamp · status · edit · delete */}
+                    <div style={{ fontSize: 10, color: C.muted, margin: '3px 4px 0', display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}>
+                      <span>{fmtTs(m.ts)}</span>
+                      {st && <span style={{ color: st.color }}>· {st.text}</span>}
+                      <button
+                        onClick={() => startEdit(m)}
+                        title="Edit"
+                        style={{ background: 'none', border: 'none', cursor: 'pointer', color: C.accent, opacity: 0.75, fontSize: 13, padding: 0, fontFamily: 'inherit', lineHeight: 1 }}
+                      >✎</button>
+                      <button
+                        onClick={() => handleDelete(m.id)}
+                        title="Delete"
+                        disabled={!!deleting}
+                        style={{ background: 'none', border: 'none', cursor: deleting ? 'default' : 'pointer', color: C.danger, opacity: deleting === m.id ? 0.3 : 0.75, fontSize: 12, padding: 0, fontFamily: 'inherit', lineHeight: 1 }}
+                      >✕</button>
+                    </div>
                   </div>
-                </div>
-              </div>
+                );
+              })
+            )}
+            <div ref={endRef} />
+          </div>
 
-              {/* Mini disclaimer */}
-              <div className="flex items-start gap-2 bg-amber-50 border border-amber-100 rounded-xl p-3">
-                <span className="text-amber-500 flex-shrink-0">⚠️</span>
-                <p className="text-xs text-amber-700 leading-relaxed">
-                  This message is simulated. It is saved only in your browser's local storage and is never transmitted to anyone.
-                </p>
-              </div>
+          {/* ── Fake input bar ──────────────────── */}
+          <div style={{ padding: '10px 14px 14px', borderTop: `1px solid ${C.line}`, display: 'flex', alignItems: 'center', gap: 8 }}>
+            <div style={{ flex: 1, background: '#1a1f2b', borderRadius: 22, padding: '9px 14px', fontSize: 13, color: C.muted, fontStyle: 'italic', userSelect: 'none' }}>
+              iMessage or SMS…
             </div>
-
-            {/* Modal Footer */}
-            <div className="px-5 py-4 border-t border-slate-100 flex gap-3">
-              <button
-                onClick={() => setShowCompose(false)}
-                className="flex-1 py-2.5 rounded-xl text-sm font-semibold text-slate-600 bg-slate-100 hover:bg-slate-200 transition-colors"
-              >
-                Cancel
-              </button>
-              <button
-                onClick={handleSave}
-                disabled={!fSender.trim() || !fMsg.trim()}
-                className="flex-1 py-2.5 rounded-xl text-sm font-semibold bg-[#006D77] text-white shadow-sm hover:bg-[#065A63] transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
-              >
-                {editTarget ? 'Save Changes' : 'Create Message'}
-              </button>
+            <div style={{ width: 36, height: 36, background: C.accent, borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', opacity: 0.35, cursor: 'not-allowed' }}>
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="#fff"><path d="M2 21l21-9L2 3v7l15 2-15 2v7z"/></svg>
             </div>
           </div>
+
         </div>
-      )}
+      </div>
+
     </div>
   );
-};
+}
 
-export default FakeSMS;
+// ─── Sub-components ───────────────────────────────────────────────────────────
+
+function LoadingDots({ color }: { color: string }) {
+  return (
+    <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+      <div style={{ display: 'flex', gap: 6 }}>
+        {[0, 1, 2].map(i => (
+          <div
+            key={i}
+            style={{
+              width: 8, height: 8, borderRadius: '50%', background: color,
+              animation: `sms-bounce 1.2s ${i * 0.2}s ease-in-out infinite`,
+            }}
+          />
+        ))}
+      </div>
+      <style>{`@keyframes sms-bounce{0%,100%{transform:translateY(0);opacity:.4}50%{transform:translateY(-6px);opacity:1}}`}</style>
+    </div>
+  );
+}
+
+function EmptyState({ folder, color }: { folder: string; color: string }) {
+  const icons: Record<string, string> = {
+    Inbox: '📥', Outbox: '📤', Sent: '✉️', Failed: '❌', Draft: '📝',
+  };
+  return (
+    <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 10 }}>
+      <span style={{ fontSize: 36, opacity: 0.25 }}>{icons[folder] ?? '📭'}</span>
+      <span style={{ fontSize: 13, color, opacity: 0.6 }}>No messages in {folder}</span>
+    </div>
+  );
+}

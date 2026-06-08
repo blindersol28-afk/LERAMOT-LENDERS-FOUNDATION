@@ -57,6 +57,16 @@ db.exec(`
     key TEXT PRIMARY KEY,
     value TEXT NOT NULL
   );
+
+  CREATE TABLE IF NOT EXISTS fake_sms (
+    id TEXT PRIMARY KEY,
+    sender TEXT NOT NULL,
+    body TEXT NOT NULL,
+    dir TEXT NOT NULL DEFAULT 'them',
+    folder TEXT NOT NULL DEFAULT 'Inbox',
+    ts INTEGER NOT NULL,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+  );
 `);
 
 // Safe migrations for existing databases
