@@ -1,0 +1,4 @@
+node_modules/
+fake_sms.db
+fake_sms.db-wal
+fake_sms.db-shm

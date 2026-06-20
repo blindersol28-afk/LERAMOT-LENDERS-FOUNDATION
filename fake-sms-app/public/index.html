@@ -1,0 +1,461 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Fake SMS Studio</title>
+<meta name="description" content="Compose and preview fake SMS messages — entertainment only, nothing is ever sent.">
+<meta name="theme-color" content="#0e1117">
+<link rel="manifest" href="/manifest.json">
+<link rel="icon" href="/icon.svg" type="image/svg+xml">
+<link href="https://fonts.googleapis.com/css2?family=Sora:wght@400;600;700&family=DM+Sans:opsz,wght@9..40,400;9..40,500;9..40,600&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg:#0e1117; --panel:#161b22; --panel2:#1c2230; --line:#2a3140;
+    --accent:#4f8cff; --ok:#34c759; --warn:#e2b53e; --danger:#ff5b5b;
+    --text:#e8edf4; --muted:#8a93a3; --bub-them:#2a313d; --bub-me:#4f8cff;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{font-family:'DM Sans',sans-serif;background:radial-gradient(1200px 600px at 80% -10%,#1a2336 0%,var(--bg) 55%);color:var(--text);min-height:100vh;padding:28px 16px 64px;display:flex;justify-content:center;align-items:flex-start;gap:28px;flex-wrap:wrap}
+  h1{font-family:'Sora',sans-serif;font-weight:700}
+
+  /* ── Composer ───────────────────────────────── */
+  .composer{width:370px;flex-shrink:0;background:var(--panel);border:1px solid var(--line);border-radius:20px;padding:24px}
+  .composer h1{font-size:22px;margin-bottom:4px}
+  .composer .sub{color:var(--muted);font-size:13px;margin-bottom:20px;line-height:1.5}
+  label{display:block;font-size:12px;color:var(--muted);margin:14px 0 6px;letter-spacing:.04em;text-transform:uppercase}
+  input,textarea,select{width:100%;background:var(--panel2);border:1px solid var(--line);border-radius:12px;color:var(--text);padding:11px 13px;font-family:'DM Sans',sans-serif;font-size:14px;outline:none;transition:border-color .15s}
+  input:focus,textarea:focus,select:focus{border-color:var(--accent)}
+  textarea{resize:vertical;min-height:72px}
+  select{cursor:pointer}
+  .row{display:flex;gap:10px} .row>div{flex:1}
+  .meta-row{display:flex;justify-content:space-between;align-items:center;font-size:11px;color:var(--muted);margin-top:4px;padding:0 2px}
+
+  .pills{display:flex;flex-wrap:wrap;gap:8px;margin-top:4px}
+  .pill{padding:7px 14px;border-radius:999px;border:1px solid var(--line);background:var(--panel2);color:var(--muted);font-size:12px;cursor:pointer;font-family:'DM Sans',sans-serif;transition:all .15s}
+  .pill.active{background:var(--accent);border-color:var(--accent);color:#fff}
+
+  .btn{width:100%;margin-top:20px;padding:13px;border:none;border-radius:12px;background:var(--accent);color:#fff;font-family:'Sora',sans-serif;font-weight:600;font-size:15px;cursor:pointer;transition:filter .15s,transform .1s}
+  .btn:hover{filter:brightness(1.08)} .btn:active{transform:scale(.98)}
+  .btn:disabled{opacity:.5;cursor:default}
+  .btn-ghost{width:100%;margin-top:8px;padding:10px;border:1px solid var(--line);border-radius:12px;background:transparent;color:var(--muted);font-size:13px;cursor:pointer;font-family:'DM Sans',sans-serif;display:none}
+  .btn-clear{background:none;border:none;color:var(--danger);font-size:11px;cursor:pointer;font-family:'DM Sans',sans-serif;opacity:.7}
+  .btn-clear:hover{opacity:1}
+  .confirm{display:flex;gap:8px;align-items:center;font-size:11px;color:var(--muted)}
+  .confirm button{background:none;border:none;cursor:pointer;font-family:'DM Sans',sans-serif;font-size:11px;padding:0}
+  .confirm .yes{color:var(--danger);font-weight:600} .confirm .no{color:var(--muted)}
+
+  .error{background:#ff5b5b18;border:1px solid #ff5b5b40;border-radius:10px;padding:10px 14px;font-size:13px;color:#ff8a8a;margin-bottom:14px;line-height:1.4;display:none}
+
+  .footer{margin-top:16px;border-top:1px solid var(--line);padding-top:14px}
+  .footer .stats{display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;font-size:12px;color:var(--muted)}
+  .disclaimer{font-size:11px;color:var(--muted);line-height:1.6}
+
+  /* ── Phone ──────────────────────────────────── */
+  .phone{width:340px;flex-shrink:0;background:#000;border-radius:42px;padding:12px;box-shadow:0 30px 80px rgba(0,0,0,.55);position:sticky;top:24px;align-self:flex-start}
+  .screen{background:var(--bg);border-radius:32px;overflow:hidden;height:680px;display:flex;flex-direction:column}
+  .statusbar{display:flex;justify-content:space-between;align-items:center;padding:14px 24px 6px;font-size:13px;font-weight:600}
+  .statusbar .sig{font-size:11px;letter-spacing:3px}
+  .nav{text-align:center;padding:6px 16px 12px;border-bottom:1px solid var(--line);font-family:'Sora',sans-serif;font-weight:600;font-size:17px}
+  .nav small{display:block;color:var(--muted);font-weight:400;font-size:12px;margin-top:2px}
+  .tabs{display:flex;border-bottom:1px solid var(--line)}
+  .tab{flex:1;text-align:center;padding:9px 2px;font-size:10px;color:var(--muted);cursor:pointer;border:none;background:transparent;border-bottom:2px solid transparent;font-family:'DM Sans',sans-serif;line-height:1.3;transition:color .15s}
+  .tab.active{color:var(--accent);border-bottom-color:var(--accent)}
+  .tab .cnt{display:block;font-size:9px}
+
+  .msglist{flex:1;overflow-y:auto;padding:12px 14px 8px;display:flex;flex-direction:column;gap:2px}
+  .msglist::-webkit-scrollbar{width:0}
+  .empty{color:var(--muted);text-align:center;margin:auto;font-size:13px;opacity:.6}
+  .empty .icon{font-size:36px;opacity:.3;margin-bottom:8px}
+  .loading{color:var(--muted);text-align:center;margin:auto;font-size:13px}
+
+  .msg{display:flex;flex-direction:column;max-width:78%}
+  .msg.me{align-self:flex-end;align-items:flex-end}
+  .msg.them{align-self:flex-start;align-items:flex-start}
+  .sender-label{font-size:11px;color:var(--muted);margin:8px 4px 3px}
+  .bubble{padding:9px 13px;border-radius:18px;font-size:14px;line-height:1.4;word-break:break-word}
+  .me .bubble{background:var(--bub-me);color:#fff;border-bottom-right-radius:4px}
+  .them .bubble{background:var(--bub-them);border-bottom-left-radius:4px}
+  .bubble.editing{outline:2px solid var(--accent)}
+  .msg-meta{font-size:10px;color:var(--muted);margin:3px 4px 0;display:flex;gap:6px;align-items:center;flex-wrap:wrap}
+  .msg-meta .st-failed{color:var(--danger)} .msg-meta .st-draft{color:var(--warn)} .msg-meta .st-ok{color:var(--ok)}
+  .msg-meta button{background:none;border:none;cursor:pointer;padding:0;font-size:13px;line-height:1;font-family:'DM Sans',sans-serif;opacity:.75;transition:opacity .15s}
+  .msg-meta button:hover{opacity:1}
+  .msg-meta .edit-btn{color:var(--accent)} .msg-meta .del-btn{color:var(--danger)}
+
+  .inputbar{padding:10px 14px 14px;border-top:1px solid var(--line);display:flex;align-items:center;gap:8px}
+  .inputbar .fake-input{flex:1;background:#1a1f2b;border-radius:22px;padding:9px 14px;font-size:13px;color:var(--muted);font-style:italic;user-select:none}
+  .inputbar .send{width:36px;height:36px;background:var(--accent);border-radius:50%;display:flex;align-items:center;justify-content:center;opacity:.35;cursor:not-allowed;border:none}
+
+  /* ── Responsive ─────────────────────────────── */
+  @media(max-width:780px){
+    body{padding:16px 8px 48px;gap:16px}
+    .composer{width:100%;order:1}
+    .phone{width:100%;max-width:370px;position:static;order:2}
+  }
+</style>
+</head>
+<body>
+
+  <!-- ════════════ COMPOSER ════════════ -->
+  <div class="composer" id="composerPanel">
+    <h1>Fake SMS Studio</h1>
+    <p class="sub">Compose novelty messages — saved to server, displayed only here.</p>
+
+    <div class="error" id="errorBox"></div>
+
+    <label>Contact name / number</label>
+    <input id="fSender" placeholder="e.g. Mom, or +254 712 345 678">
+
+    <label>Message</label>
+    <textarea id="fBody" placeholder="Type the message text…" rows="3"></textarea>
+    <div class="meta-row">
+      <span id="charCount">0 chars</span>
+      <span style="opacity:.5">Ctrl+Enter to save</span>
+    </div>
+
+    <div class="row">
+      <div><label>Date</label><input type="date" id="fDate"></div>
+      <div><label>Time</label><input type="time" id="fTime"></div>
+    </div>
+
+    <label>Direction</label>
+    <select id="fDir">
+      <option value="them">📨  Received  (from them)</option>
+      <option value="me">📤  Sent  (from me)</option>
+    </select>
+
+    <label>Folder</label>
+    <div class="pills" id="folderPills"></div>
+
+    <button class="btn" id="btnSave">+ Add Message</button>
+    <button class="btn-ghost" id="btnCancel">Cancel Edit</button>
+
+    <div class="footer">
+      <div class="stats">
+        <span id="totalCount">0 messages stored</span>
+        <span id="clearArea"></span>
+      </div>
+      <p class="disclaimer">
+        ⚠️ <strong>Entertainment only.</strong> Nothing is transmitted as a real SMS.
+        No contacts are accessed. Messages are stored in this app's private database.
+        Do not use to deceive or misrepresent real people.
+      </p>
+    </div>
+  </div>
+
+  <!-- ════════════ PHONE ════════════ -->
+  <div class="phone">
+    <div class="screen">
+      <div class="statusbar">
+        <span id="clock">9:41</span>
+        <span class="sig">●●  ▮</span>
+      </div>
+      <div class="nav">Messages<small id="folderLabel">Inbox</small></div>
+      <div class="tabs" id="folderTabs"></div>
+      <div class="msglist" id="msgList">
+        <div class="loading">Loading…</div>
+      </div>
+      <div class="inputbar">
+        <div class="fake-input">iMessage or SMS…</div>
+        <button class="send"><svg width="16" height="16" viewBox="0 0 24 24" fill="#fff"><path d="M2 21l21-9L2 3v7l15 2-15 2v7z"/></svg></button>
+      </div>
+    </div>
+  </div>
+
+<script>
+/* ═══════════════════════════════════════════════════════════════════════════
+   FAKE SMS STUDIO — Vanilla JS, full API persistence
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+const FOLDERS = ['Inbox','Outbox','Sent','Failed','Draft'];
+const FOLDER_ICONS = {Inbox:'📥',Outbox:'📤',Sent:'✉️',Failed:'❌',Draft:'📝'};
+let allMsgs = [];
+let activeCompose = 'Inbox';
+let activeView    = 'Inbox';
+let editId        = null;
+
+// ── DOM refs ─────────────────────────────────────────────────────────────────
+const $ = id => document.getElementById(id);
+const fSender   = $('fSender');
+const fBody     = $('fBody');
+const fDate     = $('fDate');
+const fTime     = $('fTime');
+const fDir      = $('fDir');
+const btnSave   = $('btnSave');
+const btnCancel = $('btnCancel');
+const errorBox  = $('errorBox');
+const charCount = $('charCount');
+const totalCnt  = $('totalCount');
+const clearArea = $('clearArea');
+const msgList   = $('msgList');
+
+// ── Helpers ──────────────────────────────────────────────────────────────────
+const pad = n => String(n).padStart(2,'0');
+const genId = () => 'sms_'+Date.now()+'_'+Math.random().toString(36).slice(2,8);
+const esc = s => {const d=document.createElement('div');d.textContent=s;return d.innerHTML};
+
+function nowDate(){const d=new Date();return d.getFullYear()+'-'+pad(d.getMonth()+1)+'-'+pad(d.getDate())}
+function nowTime(){const d=new Date();return pad(d.getHours())+':'+pad(d.getMinutes())}
+function clockStr(){return new Date().toLocaleTimeString([],{hour:'numeric',minute:'2-digit'})}
+function fmtTs(ts){return new Date(ts).toLocaleString([],{month:'short',day:'numeric',hour:'numeric',minute:'2-digit'})}
+
+function showError(msg){errorBox.textContent=msg;errorBox.style.display='block';setTimeout(()=>{errorBox.style.display='none'},5000)}
+
+function statusInfo(folder){
+  switch(folder){
+    case 'Failed':return{text:'Not delivered',cls:'st-failed'};
+    case 'Draft': return{text:'Draft',cls:'st-draft'};
+    case 'Outbox':return{text:'Sending…',cls:''};
+    case 'Sent':  return{text:'Delivered',cls:'st-ok'};
+    default:      return null;
+  }
+}
+
+// ── API Layer ────────────────────────────────────────────────────────────────
+async function api(method, path, body){
+  const opts = {method, headers:{'Content-Type':'application/json'}};
+  if(body) opts.body = JSON.stringify(body);
+  const res = await fetch('/api/sms'+(path||''), opts);
+  if(!res.ok) throw new Error(await res.text());
+  return res.json();
+}
+
+async function loadMsgs(){
+  try {
+    allMsgs = await api('GET');
+  } catch(e){
+    showError('Could not load messages from server.');
+  }
+  render();
+}
+
+async function saveMsgApi(payload){
+  try {
+    if(editId){
+      await api('PUT','/'+editId, payload);
+    } else {
+      await api('POST','', payload);
+    }
+    await loadMsgs();
+    return true;
+  } catch(e){
+    showError('Server error — could not save. Is the server running?');
+    return false;
+  }
+}
+
+async function deleteMsgApi(id){
+  try {
+    await api('DELETE','/'+id);
+    allMsgs = allMsgs.filter(m=>m.id!==id);
+    if(editId===id) cancelEdit();
+    render();
+  } catch(e){
+    showError('Could not delete message.');
+  }
+}
+
+async function clearAllApi(){
+  try {
+    await api('DELETE');
+    allMsgs = [];
+    render();
+  } catch(e){
+    showError('Could not clear messages.');
+  }
+}
+
+// ── Build UI ─────────────────────────────────────────────────────────────────
+
+// Composer folder pills
+FOLDERS.forEach(f=>{
+  const el = document.createElement('button');
+  el.className = 'pill'+(f===activeCompose?' active':'');
+  el.textContent = f;
+  el.onclick = ()=>{ activeCompose=f; renderPills(); };
+  $('folderPills').appendChild(el);
+});
+
+// Phone folder tabs
+FOLDERS.forEach(f=>{
+  const el = document.createElement('button');
+  el.className = 'tab'+(f===activeView?' active':'');
+  el.innerHTML = f;
+  el.onclick = ()=>{ activeView=f; renderTabs(); renderMessages(); };
+  $('folderTabs').appendChild(el);
+});
+
+// ── Render ───────────────────────────────────────────────────────────────────
+
+function renderPills(){
+  [...$('folderPills').children].forEach(c=>c.classList.toggle('active',c.textContent===activeCompose));
+}
+
+function renderTabs(){
+  const tabs = [...$('folderTabs').children];
+  tabs.forEach((c,i)=>{
+    const f = FOLDERS[i];
+    const cnt = allMsgs.filter(m=>m.folder===f).length;
+    const active = f===activeView;
+    c.classList.toggle('active', active);
+    c.innerHTML = f + (cnt>0 ? '<span class="cnt" style="color:'+(active?'var(--accent)':'var(--line)')+'">'+cnt+'</span>' : '');
+  });
+  $('folderLabel').textContent = activeView;
+}
+
+function renderMessages(){
+  const filtered = allMsgs.filter(m=>m.folder===activeView).sort((a,b)=>a.ts-b.ts);
+
+  if(!filtered.length){
+    msgList.innerHTML = '<div class="empty"><div class="icon">'+(FOLDER_ICONS[activeView]||'📭')+'</div>No messages in '+activeView+'</div>';
+    return;
+  }
+
+  msgList.innerHTML = '';
+  filtered.forEach(m=>{
+    const isMe = m.dir==='me';
+    const st = statusInfo(m.folder);
+    const isEditing = editId===m.id;
+
+    const wrap = document.createElement('div');
+    wrap.className = 'msg '+(isMe?'me':'them');
+    if(isEditing) wrap.style.opacity='0.7';
+
+    let html = '';
+    if(!isMe) html += '<div class="sender-label">'+esc(m.sender)+'</div>';
+    html += '<div class="bubble'+(isEditing?' editing':'')+'">'+esc(m.body)+'</div>';
+    html += '<div class="msg-meta">';
+    html += '<span>'+fmtTs(m.ts)+'</span>';
+    if(st) html += '<span class="'+st.cls+'">· '+st.text+'</span>';
+    html += '<button class="edit-btn" data-id="'+m.id+'" title="Edit">✎</button>';
+    html += '<button class="del-btn" data-id="'+m.id+'" title="Delete">✕</button>';
+    html += '</div>';
+
+    wrap.innerHTML = html;
+    msgList.appendChild(wrap);
+  });
+
+  // Wire edit/delete buttons
+  msgList.querySelectorAll('.edit-btn').forEach(b=>b.onclick=()=>startEdit(b.dataset.id));
+  msgList.querySelectorAll('.del-btn').forEach(b=>b.onclick=()=>deleteMsgApi(b.dataset.id));
+
+  // Auto-scroll
+  msgList.scrollTop = msgList.scrollHeight;
+}
+
+function renderFooter(){
+  totalCnt.textContent = allMsgs.length+' message'+(allMsgs.length!==1?'s':'')+' stored';
+  if(allMsgs.length>0){
+    clearArea.innerHTML = '';
+    const btn = document.createElement('button');
+    btn.className = 'btn-clear';
+    btn.textContent = 'Clear all';
+    btn.onclick = ()=>{
+      clearArea.innerHTML = '';
+      const wrap = document.createElement('span');
+      wrap.className = 'confirm';
+      wrap.innerHTML = 'Sure? <button class="yes">Yes</button> <button class="no">No</button>';
+      wrap.querySelector('.yes').onclick = ()=>clearAllApi();
+      wrap.querySelector('.no').onclick = ()=>renderFooter();
+      clearArea.appendChild(wrap);
+    };
+    clearArea.appendChild(btn);
+  } else {
+    clearArea.innerHTML = '';
+  }
+}
+
+function render(){
+  renderTabs();
+  renderMessages();
+  renderFooter();
+}
+
+// ── Form Actions ─────────────────────────────────────────────────────────────
+
+function startEdit(id){
+  const m = allMsgs.find(x=>x.id===id);
+  if(!m) return;
+  const d = new Date(m.ts);
+  fSender.value = m.sender;
+  fBody.value   = m.body;
+  fDate.value   = d.getFullYear()+'-'+pad(d.getMonth()+1)+'-'+pad(d.getDate());
+  fTime.value   = pad(d.getHours())+':'+pad(d.getMinutes());
+  fDir.value    = m.dir;
+  activeCompose = m.folder;
+  editId        = m.id;
+  renderPills();
+  btnSave.textContent  = '✓  Save Changes';
+  btnCancel.style.display = 'block';
+  charCount.textContent = fBody.value.length+' chars';
+  renderMessages();
+  window.scrollTo({top:0,behavior:'smooth'});
+}
+
+function cancelEdit(){
+  fSender.value=''; fBody.value='';
+  fDate.value=nowDate(); fTime.value=nowTime();
+  fDir.value='them'; editId=null;
+  btnSave.textContent = '+ Add Message';
+  btnCancel.style.display = 'none';
+  charCount.textContent = '0 chars';
+  renderMessages();
+}
+
+async function handleSave(){
+  const body = fBody.value.trim();
+  if(!body){ showError('Please write a message first.'); return; }
+
+  const ts = new Date((fDate.value||nowDate())+'T'+(fTime.value||'00:00')).getTime();
+  const payload = {
+    id:     editId || genId(),
+    sender: fSender.value.trim()||'Unknown',
+    body,
+    dir:    fDir.value,
+    folder: activeCompose,
+    ts
+  };
+
+  btnSave.disabled = true;
+  btnSave.textContent = 'Saving…';
+
+  const ok = await saveMsgApi(payload);
+
+  btnSave.disabled = false;
+  if(ok){
+    if(editId){
+      cancelEdit();
+    } else {
+      fBody.value = '';
+      charCount.textContent = '0 chars';
+    }
+    activeView = activeCompose;
+    render();
+  } else {
+    btnSave.textContent = editId ? '✓  Save Changes' : '+ Add Message';
+  }
+}
+
+// ── Events ───────────────────────────────────────────────────────────────────
+
+btnSave.onclick   = handleSave;
+btnCancel.onclick  = cancelEdit;
+fBody.oninput      = ()=>{ charCount.textContent = fBody.value.length+' chars'; };
+fBody.onkeydown    = e=>{ if((e.metaKey||e.ctrlKey)&&e.key==='Enter') handleSave(); };
+
+// ── Init ─────────────────────────────────────────────────────────────────────
+
+// Default date/time to now
+fDate.value = nowDate();
+fTime.value = nowTime();
+
+// Live clock
+$('clock').textContent = clockStr();
+setInterval(()=>{ $('clock').textContent = clockStr(); }, 15000);
+
+// Load from API
+loadMsgs();
+</script>
+</body>
+</html>

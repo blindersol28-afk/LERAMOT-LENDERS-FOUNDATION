@@ -30,6 +30,13 @@
     <!-- Favicon -->
     <link rel="icon" type="image/png" href="/logo.png" />
     <link rel="apple-touch-icon" href="/logo.png" />
+
+    <!-- PWA manifest — enables "Add to Home Screen" / install on Android & iOS -->
+    <link rel="manifest" href="/manifest.json" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+    <meta name="apple-mobile-web-app-title" content="Leramot" />
     <!-- Import Map to resolve ESM modules in the browser with consistent versions -->
     <script type="importmap">
 {
@@ -108,5 +115,16 @@
 <body class="bg-slate-50 text-slate-900">
     <div id="root"></div>
 <script type="module" src="/index.tsx"></script>
+
+<!-- Register service worker for PWA install support -->
+<script>
+  if ('serviceWorker' in navigator) {
+    window.addEventListener('load', () => {
+      navigator.serviceWorker.register('/sw.js')
+        .then(reg => console.log('[SW] Registered, scope:', reg.scope))
+        .catch(err => console.warn('[SW] Registration failed:', err));
+    });
+  }
+</script>
 </body>
 </html>
