@@ -1,7 +1,7 @@
 {
   "name": "Leramot Lenders Foundation",
   "short_name": "Leramot",
-  "description": "Instant M-PESA microloans & SMS Studio — Kenya's fast fintech platform",
+  "description": "Instant M-PESA microloans — Kenya's fast fintech platform",
   "start_url": "/",
   "scope": "/",
   "display": "standalone",
@@ -9,7 +9,7 @@
   "theme_color": "#006D77",
   "orientation": "portrait-primary",
   "lang": "en-KE",
-  "categories": ["finance", "utilities"],
+  "categories": ["finance"],
   "icons": [
     {
       "src": "/logo.png",
@@ -42,12 +42,6 @@
       "short_name": "Loans",
       "url": "/#/loan-center",
       "description": "View and manage your active loans"
-    },
-    {
-      "name": "SMS Studio",
-      "short_name": "SMS",
-      "url": "/#/sms-simulator",
-      "description": "Open Fake SMS Studio"
     }
   ],
   "screenshots": [],
